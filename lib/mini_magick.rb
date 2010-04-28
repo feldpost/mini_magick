@@ -4,11 +4,14 @@ require "fileutils"
 require "open3"
 
 require File.join(File.dirname(__FILE__), '/image_temp_file')
+require File.join(File.dirname(__FILE__), '/utilities')
 
 module MiniMagick
   class MiniMagickError < RuntimeError; end
 
   class Image
+    include MiniMagick::Utilities
+    
     attr :path
     attr :tempfile
     attr :output
