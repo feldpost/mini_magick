@@ -4,6 +4,8 @@ require 'stringio'
 require 'pathname'
 require 'shellwords'
 
+require File.join(File.dirname(__FILE__), '/utilities')
+
 module MiniMagick
   class << self
     attr_accessor :processor
@@ -46,6 +48,8 @@ module MiniMagick
   class Image
     # @return [String] The location of the current working file
     attr_accessor :path
+    
+    include MiniMagick::Utilities
 
     # Class Methods
     # -------------
