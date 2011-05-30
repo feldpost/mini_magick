@@ -1,8 +1,6 @@
 require 'rubygems'
 require 'test/unit'
-require 'mocha'
 require 'pathname'
-require 'stringio'
 require File.expand_path('../../lib/mini_magick', __FILE__)
 
 #MiniMagick.processor = :gm
@@ -14,7 +12,7 @@ class ImageTest < Test::Unit::TestCase
 
   SIMPLE_IMAGE_PATH = CURRENT_DIR + "simple.gif"
   MINUS_IMAGE_PATH  = CURRENT_DIR + "simple-minus.gif"
-  TIFF_IMAGE_PATH   = CURRENT_DIR + "leaves spaced.tiff"
+  TIFF_IMAGE_PATH   = CURRENT_DIR + "leaves (spaced).tiff"
   NOT_AN_IMAGE_PATH = CURRENT_DIR + "not_an_image.php"
   GIF_WITH_JPG_EXT  = CURRENT_DIR + "actually_a_gif.jpg"
   EXIF_IMAGE_PATH   = CURRENT_DIR + "trogdor.jpg"
@@ -37,6 +35,7 @@ class ImageTest < Test::Unit::TestCase
   def test_image_io_reading
     buffer = StringIO.new(File.read(SIMPLE_IMAGE_PATH))
     image = Image.read(buffer)
+    assert image.valid?
     image.destroy!
   end
 
@@ -54,12 +53,31 @@ class ImageTest < Test::Unit::TestCase
 
   def test_remote_image
     image = Image.open("http://www.google.com/images/logos/logo.png")
-    image.valid?
+    assert image.valid?
+    image.destroy!
+  end
+
+  def test_remote_image_with_complex_url
+    image = Image.open("http://a0.twimg.com/a/1296609216/images/fronts/logo_withbird_home.png?extra=foo&plus=bar")
+    assert image.valid?
     image.destroy!
   end
 
   def test_image_write
     output_path = "output.gif"
+    begin
+      image = Image.new(SIMPLE_IMAGE_PATH)
+      image.write output_path
+
+      assert File.exists?(output_path)
+    ensure
+      File.delete output_path
+    end
+    image.destroy!
+  end
+
+  def test_image_write_with_space_in_output_path
+    output_path = "test output.gif"
     begin
       image = Image.new(SIMPLE_IMAGE_PATH)
       image.write output_path
@@ -98,6 +116,7 @@ class ImageTest < Test::Unit::TestCase
     assert_equal 150, image[:width]
     assert_equal 55, image[:height]
     assert_equal [150, 55], image[:dimensions]
+    assert_equal 'PseudoClassRGB', image[:colorspace]
     assert_match(/^gif$/i, image[:format])
     image.destroy!
   end
@@ -239,6 +258,25 @@ class ImageTest < Test::Unit::TestCase
   ensure
     FileUtils.rm("test.gif")
   end
+  
+  # https://github.com/probablycorey/mini_magick/issues/37
+  def test_nonstandard_locale
+    original_lang = ENV["LANG"]
+    ENV["LANG"] = "fr_FR.UTF-8"
+    
+    # This test should break
+    test_throw_on_openining_not_an_image
+  ensure
+    ENV["LANG"] = original_lang
+  end
+  
+  def test_poop
+    img = MiniMagick::Image.open(SIMPLE_IMAGE_PATH)
+    img.gravity "Center"
+    img.crop "480x480"
+    img.resize "250x250"
+    img.write CURRENT_DIR + "output.png"
+  end
 
   def test_throw_format_error
     image = Image.open(SIMPLE_IMAGE_PATH)
@@ -249,16 +287,4 @@ class ImageTest < Test::Unit::TestCase
     end
     image.destroy!
   end
-
-  # testing that if copying files formatted from an animation fails,
-  # it raises an appropriate error
-  def test_throw_animation_copy_after_format_error
-    image = Image.open(ANIMATION_PATH)
-    FileUtils.stubs(:copy_file).raises(Errno::ENOENT)
-    assert_raises MiniMagick::Error do
-      image.format('png')
-    end
-  end
-
-
 end

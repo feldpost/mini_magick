@@ -1,5 +1,6 @@
 require 'tempfile'
 require 'subexec'
+require 'stringio'
 require 'pathname'
 require File.join(File.dirname(__FILE__), '/utilities')
 
@@ -22,7 +23,7 @@ module MiniMagick
     end
   end
 
-  MOGRIFY_COMMANDS = %w{adaptive-blur adaptive-resize adaptive-sharpen adjoin affine alpha annotate antialias append authenticate auto-gamma auto-level auto-orient background bench iterations bias black-threshold blue-primary point blue-shift factor blur border bordercolor brightness-contrast caption string cdl filename channel type charcoal radius chop clip clamp clip-mask filename clip-path id clone index clut contrast-stretch coalesce colorize color-matrix colors colorspace type combine comment string compose operator composite compress type contrast convolve coefficients crop cycle amount decipher filename debug events define format:option deconstruct delay delete index density depth despeckle direction type display server dispose method distort type coefficients dither method draw string edge radius emboss radius encipher filename encoding type endian type enhance equalize evaluate operator evaluate-sequence operator extent extract family name fft fill filter type flatten flip floodfill flop font name format string frame function name fuzz distance fx expression gamma gaussian-blur geometry gravity type green-primary point help identify ifft implode amount insert index intent type interlace type interline-spacing interpolate method interword-spacing kerning label string lat layers method level limit type linear-stretch liquid-rescale log format loop iterations mask filename mattecolor median radius modulate monitor monochrome morph morphology method kernel motion-blur negate noise radius normalize opaque ordered-dither NxN orient type page paint radius ping pointsize polaroid angle posterize levels precision preview type print string process image-filter profile filename quality quantizespace quiet radial-blur angle raise random-threshold low,high red-primary point regard-warnings region remap filename render repage resample resize respect-parentheses roll rotate degrees sample sampling-factor scale scene seed segments selective-blur separate sepia-tone threshold set attribute shade degrees shadow sharpen shave shear sigmoidal-contrast size sketch solarize threshold splice spread radius strip stroke strokewidth stretch type style type swap indexes swirl degrees texture filename threshold thumbnail tile filename tile-offset tint transform transparent transparent-color transpose transverse treedepth trim type type undercolor unique-colors units type unsharp verbose version view vignette virtual-pixel method wave weight type white-point point white-threshold write filename}
+  MOGRIFY_COMMANDS = %w{adaptive-blur adaptive-resize adaptive-sharpen adjoin affine alpha annotate antialias append authenticate auto-gamma auto-level auto-orient background bench iterations bias black-threshold blue-primary point blue-shift factor blur border bordercolor brightness-contrast caption string cdl filename channel type charcoal radius chop clip clamp clip-mask filename clip-path id clone index clut contrast-stretch coalesce colorize color-matrix colors colorspace type combine comment string compose operator composite compress type contrast convolve coefficients crop cycle amount decipher filename debug events define format:option deconstruct delay delete index density depth despeckle direction type display server dispose method distort type coefficients dither method draw string edge radius emboss radius encipher filename encoding type endian type enhance equalize evaluate operator evaluate-sequence operator extent extract family name fft fill filter type flatten flip floodfill flop font name format string frame function name fuzz distance fx expression gamma gaussian-blur geometry gravity type green-primary point help identify ifft implode amount insert index intent type interlace type interline-spacing interpolate method interword-spacing kerning label string lat layers method level limit type linear-stretch liquid-rescale log format loop iterations mask filename mattecolor median radius modulate monitor monochrome morph morphology method kernel motion-blur negate noise radius normalize opaque ordered-dither NxN orient type page paint radius ping pointsize polaroid angle posterize levels precision preview type print string process image-filter profile filename quality quantize quiet radial-blur angle raise random-threshold low,high red-primary point regard-warnings region remap filename render repage resample resize respect-parentheses roll rotate degrees sample sampling-factor scale scene seed segments selective-blur separate sepia-tone threshold set attribute shade degrees shadow sharpen shave shear sigmoidal-contrast size sketch solarize threshold splice spread radius strip stroke strokewidth stretch type style type swap indexes swirl degrees texture filename threshold thumbnail tile filename tile-offset tint transform transparent transparent-color transpose transverse treedepth trim type type undercolor unique-colors units type unsharp verbose version view vignette virtual-pixel method wave weight type white-point point white-threshold write filename}
 
   class Error < RuntimeError; end
   class Invalid < StandardError; end
@@ -75,12 +76,14 @@ module MiniMagick
       # @param file_or_url [String] Either a local file path or a URL that open-uri can read
       # @param ext [String] Specify the extension you want to read it as
       # @return [Image] The loaded image
-      def open(file_or_url, ext = File.extname(file_or_url))
+      def open(file_or_url, ext = nil)
         file_or_url = file_or_url.to_s # Force it to be a String... hell or highwater
         if file_or_url.include?("://")
           require 'open-uri'
+          ext ||= File.extname(URI.parse(file_or_url).path)
           self.read(Kernel::open(file_or_url), ext)
         else
+          ext ||= File.extname(file_or_url)
           File.open(file_or_url, "rb") do |f|
             self.read(f, ext)
           end
@@ -134,7 +137,7 @@ module MiniMagick
     end
     
     def escaped_path
-      Pathname.new(@path).to_s.gsub(" ", "\\ ")
+      "\"#{Pathname.new(@path).to_s}\""
     end
 
     # Checks to make sure that MiniMagick can read the file and understand it.
@@ -158,6 +161,7 @@ module MiniMagick
     #    image["format"]      #=> "TIFF"
     #    image["height"]      #=> 41 (pixels)
     #    image["width"]       #=> 50 (pixels)
+    #    image["colorspace"]  #=> "DirectClassRGB"
     #    image["dimensions"]  #=> [50, 41]
     #    image["size"]        #=> 2050 (bits)
     #    image["original_at"] #=> 2005-02-23 23:17:24 +0000 (Read from Exif data)
@@ -169,6 +173,8 @@ module MiniMagick
     def [](value)
       # Why do I go to the trouble of putting in newlines? Because otherwise animated gifs screw everything up
       case value.to_s
+      when "colorspace"
+        run_command("identify", "-format", format_option("%r"), escaped_path).split("\n")[0]
       when "format"
         run_command("identify", "-format", format_option("%m"), escaped_path).split("\n")[0]
       when "height"
@@ -218,7 +224,10 @@ module MiniMagick
     # @param page [Integer] If this is an animated gif, say which 'page' you want with an integer. Leave as default if you don't care.
     # @return [nil]
     def format(format, page = 0)
-      run_command("mogrify", "-format", format, @path)
+      c = CommandBuilder.new('mogrify', '-format', format)
+      yield c if block_given?
+      c << @path
+      run(c)
 
       old_path = @path.dup
       @path.sub!(/(\.\w*)?$/, ".#{format}")
@@ -252,7 +261,9 @@ module MiniMagick
     def write(output_to)
       if output_to.kind_of?(String) || !output_to.respond_to?(:write)
         FileUtils.copy_file @path, output_to
-        run_command "identify", output_to # Verify that we have a good image
+        # We need to escape the output path if it contains a space
+        escaped_output_to = output_to.to_s.gsub(' ', '\\ ')
+        run_command "identify", escaped_output_to # Verify that we have a good image
       else # stream
         File.open(@path, "rb") do |f|
           f.binmode
@@ -396,15 +407,27 @@ module MiniMagick
         raise Error, "You must call 'format' on the image object directly!"
       elsif MOGRIFY_COMMANDS.include?(guessed_command_name)
         add(guessed_command_name, *options)
+        self
       else
         super(symbol, *args)
+      end
+    end
+
+    def +(*options)
+      push(@args.pop.gsub(/^-/, '+'))
+      if options.any?
+        options.each do |o|
+          push "\"#{ o }\""
+        end
       end
     end
 
     def add(command, *options)
       push "-#{command}"
       if options.any?
-        push "\"#{options.join(" ")}\""
+        options.each do |o|
+          push "\"#{ o }\""
+        end
       end
     end
 
@@ -412,11 +435,5 @@ module MiniMagick
       @args << arg.to_s.strip
     end
     alias :<< :push
-
-    # @deprecated Please don't use the + method its has been deprecated
-    def +(value)
-      warn "Warning: The MiniMagick::ComandBuilder#+ command has been deprecated. Please use c << '+#{value}' instead"
-      push "+#{value}"
-    end
   end
 end
