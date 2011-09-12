@@ -21,17 +21,18 @@ module MiniMagick
       end
     end
 
-    def resize!(width,height,filter="Lanczos")
+    def resize!(width,height,filter="Lanczos",dpi_res=nil)
       combine_options do |c|
         c.filter filter
+        c.resample(dpi_res) if dpi_res
         c.resize "#{width}x#{height}!"
       end
     end
 
-    def resize_to_max!(width,height,filter="Lanczos")
+    def resize_to_max!(width,height,filter="Lanczos",dpi_res=nil)
       if width < columns || height < rows
         scale = [width/columns.to_f, height/rows.to_f].min
-        resize!(scale*(columns-0.5), scale*(rows-0.5))
+        resize!(scale*(columns-0.5), scale*(rows-0.5), filter, dpi_res)
       end
     end
     
