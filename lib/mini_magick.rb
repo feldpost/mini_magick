@@ -46,6 +46,7 @@ module MiniMagick
   class Invalid < StandardError; end
 
   class Image
+    include MiniMagick::Utilities
     # @return [String] The location of the current working file
     attr_accessor :path
     
